@@ -18,7 +18,7 @@ generates, validates, and repairs SousChef recipes.
 2. **Validate:** Pydantic schema validation
 3. **Quality:** Domain checks (units, durations, required text)
 4. **Repair:** LLM-based fixes, with max iterations
-5. **Export:** Write JSON/CSV to the export folder
+5. **Export:** Write JSON/CSV
 
 **Key principle:** LLM is mandatory for generation and translation. No fallback mode for silent defaults.
 
@@ -36,19 +36,15 @@ Modules:
 
 ## Run
 - `streamlit run src/main.py`
-- **Required:** Select a Groq model in the sidebar dropdown (e.g., `llama-3.1-8b-instant`)
-
-## Tests
-- `STREAMLIT_E2E=1 pytest -q`
+- Select a Groq model in the sidebar dropdown (default is `llama-3.1-8b-instant`)
 
 ## Input
 - Paste a full recipe in the text box.
-- Or click `Load sample from recipe.txt` (from the import folder).
-
+- Add one or multiple links in the url box
+- Import a document
+  
 ## Output
-- Plain-text recipe.
-- SousChef JSON output.
-- Exported JSON and CSV files in the export folder.
+- SousChef JSON or CSV output.
 
 ## Notes
 - **LLM is mandatory** for generation and translation quality. The app will raise an error if no model is configured.
@@ -56,61 +52,3 @@ Modules:
 - If parsing or generation fails, the app displays a clear error message.
 - Sample input file lives in `import/recipe.txt`.
 - Errors propagate to Streamlit for user visibility (no silent fallbacks).
-
-## Phase 4 Evaluation
-
-Evaluation inputs live in `evaluation/recipes.json` and the runner is
-`evaluation/run_phase4.py`.
-
-**To run evaluation:**
-```bash
-python -m evaluation.run_phase4 --model-name <groq-model> [--temperature <value>] [--limit <count>]
-```
-
-**Required:** `--model-name` must be provided. No fallback mode.
-
-Run:
-
-```bash
-"/Users/qianhonglin/Downloads/DS W4 mid-stake/.venv/bin/python" evaluation/run_phase4.py
-```
-
-Results are written to `evaluation/phase4_results.csv`.
-
-### LLM Validation (Groq)
-
-The runner supports LLM-backed validation and includes safe defaults to avoid
-rate limits on the free tier:
-
-- `--sleep-seconds 10` (default)
-- `--max-repair-iterations 1` (default)
-
-Recommended quick run (fast model, small set):
-
-```bash
-export $(cat .env | xargs) && \
-   "/Users/qianhonglin/Downloads/DS W4 mid-stake/.venv/bin/python" evaluation/run_phase4.py \
-   --recipes-path evaluation/recipes_quick.json \
-   --model-name "llama-3.1-8b-instant" \
-   --temperature 0.2 \
-   --limit 3 \
-   --sleep-seconds 10 \
-   --max-repair-iterations 1
-```
-
-Helpful flags:
-- `--limit N` runs only the first N recipes from the list.
-- `--skip-urls` skips URL-based recipes.
-- `--sleep-seconds` adds a delay between recipes to reduce 429s.
-- `--max-repair-iterations` caps repair attempts per recipe.
-
-Latest run (2026-02-21):
-- Recipes: 10
-- Success: 10
-- Failures: 0
-- LLM used: false (fallback mode)
-
-## Phase 5 Notes
-- README updated with architecture and test instructions.
-- Workflow comments added in `src/workflow.py`.
-- LLM-backed evaluation still pending due to rate limits.
