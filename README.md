@@ -1,6 +1,6 @@
 # SousChef Recipe Transformer
 
-This app turns a normal recipe into a SousChef JSON file. It also shows a plain-text version and lets you export files.
+This app turns a normal recipe into a SousChef JSON file. It also shows a plain-text version and lets you export files. Use the app here: https://souschef-transformer.streamlit.app/
 
 ## Features
 - Analyze the recipe, then generate the SousChef output.
