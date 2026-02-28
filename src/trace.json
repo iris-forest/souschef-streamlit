@@ -1,7 +1,0 @@
-Generation failed: Failed to extract valid JSON from LLM response.
-
-Response appears to be truncated (doesn't end with }). The model may have hit token limits. Try a simpler recipe or increase max_tokens.
-
-Response length: 4272 chars Response preview (first 1500 chars): { "Order": 1, "Generic Name": { "en": "Gyoza", "nl_NL": "Gyoza" }, "Highlighted?": false, "Recipe Variant Content": [ { "Recipe Variant": "Meat", "Recipe Image": null, "Recipe Name": { "en": "Japanese Gyoza (Meat)", "nl_NL": "Japanse Gyoza met Vlees" }, "Description": { "en": "Japanese Gyoza is a traditional dish from Japan. It consists of dumplings filled with a mixture of ground pork and vegetables.", "nl_NL": "Gyoza is een traditioneel Japans gerecht. Het bestaat uit dumplings die gevuld zijn met een mengsel van gehakt en groenten." }, "Diet/Allergen 01": null, "Diet/Allergen 02": null, "Tag": null, "Difficulty": "Medium", "Nutritional Values": { "Energie (kCal)": 450, "Protein (grams)": 25, "Carbohydrates (grams)": 20, "Sugar (grams)": 5, "Fat (grams)": 25, "Saturated Fat (grams)": 10, "Natrium (milligrams)": 500, "Fibers (grams)": 2 }, "Shopping List": [ "green cabbage", "ground pork", "garlic chives", "garlic", "ginger", "sesame oil", "cornstarch", "soy sauce", "wonton wrappers", "vegetable oil" ], "Sponsor": null, "Preview Video": null } ], "Steps Part 1": [ { "Display Name": { "en": "Prepare the cabbage", "nl_NL": "Bereid de kool voor" },
-
-...(truncated)
