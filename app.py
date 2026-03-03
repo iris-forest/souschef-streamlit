@@ -1,16 +1,33 @@
 """
 SousChef Recipe Generation Module
 
-CRITICAL: All AI output MUST follow the SousChef Output Specification.
-See SOUSCHEF_OUTPUT_SPEC.md for the exact requirements.
+OUTPUT CONSTRAINTS:
+The code enforces these requirements on all AI-generated recipe data:
 
-Key rules:
-- All string values in JSON must be single-line (no literal newlines)
-- Nutritional values must be single INTEGER numbers (no ranges or decimals)
-- Metric units must use exact capitalization from the allowed list
-- Descriptions must be 2 sentences separated by space (no newlines)
-- Instructions must be very concise, single-line text
+JSON Format:
+- All string values must be single-line (no literal newlines in JSON)
 - All required fields must be present and non-empty
+- Proper JSON escaping for quotes and special characters
+
+Nutritional Values:
+- Must be single INTEGER numbers (no ranges like "250-300" or decimals)
+- Automatically normalized: ranges converted to first value, decimals rounded
+
+Metric Units:
+- Must use exact capitalization: Amount, Can, Cup, Degrees, Gram, Kilogram, 
+  Liter, Milligram, Milliliter, Tablespoon, Teaspoon
+- Common aliases auto-converted (e.g., "piece" → "Amount")
+
+Text Content:
+- Descriptions: exactly 2 sentences/paragraphs separated by space (no newlines)
+- Instructions: concise, single-line text per step
+- Shopping list: simple string array (complex objects normalized to strings)
+
+Structure:
+- Maximum 50 steps per recipe
+- At least one recipe variant required
+- Each step must have non-empty instructions in both English and Dutch
+- Each step must have duration > 0
 """
 
 import json
@@ -473,21 +490,16 @@ def generate_souschef_recipe(
 ) -> SousChefRecipe:
     """Main orchestrator: generates SousChef recipe by assembling parts.
     
-    IMPORTANT: Output MUST follow SOUSCHEF_OUTPUT_SPEC.md exactly.
-    
     The recipe generation process:
     1. Generate top-level metadata (names, descriptions, nutritional values)
     2. Generate steps one by one (with instructions, ingredients, durations)
     3. Assemble into final SousChefRecipe structure
     
-    All AI-generated content is validated against the specification to ensure:
-    - String values are properly JSON-escaped (no literal newlines)
-    - Nutritional values are single integers (no ranges or decimals)
-    - Metric units use exact capitalization
-    - Descriptions are 2 sentences separated by space (no newlines)
-    - Instructions are very concise and single-line
-    
-    See SOUSCHEF_OUTPUT_SPEC.md for complete requirements.
+    Output constraints are enforced through:
+    - JSON sanitization (_sanitize_json_string): escapes literal newlines
+    - Metadata normalization (_normalize_metadata): converts ranges to integers
+    - Unit normalization (normalize_metric_units): ensures proper capitalization
+    - Validation (validate_recipe): checks required fields and structure
     """
     
     # Step 1: Generate top-level metadata
@@ -884,16 +896,13 @@ def _assemble_souschef_recipe(metadata: dict, steps: List[dict]) -> SousChefReci
 def _sanitize_json_string(text: str) -> str:
     """Sanitize JSON string by escaping unescaped newlines and special characters.
     
-    REQUIRED BY SOUSCHEF_OUTPUT_SPEC.md:
-    - Unescaped newlines in JSON string values break JSON parsing
-    - This function converts literal newlines to escaped \n sequences
-    - This prevents "Expecting ',' delimiter" JSON parsing errors
-    
-    Handles:
-    - Literal newlines (\\n) -> escaped \n
-    - Literal tabs (\\t) -> escaped \\t  
-    - Literal carriage returns (\\r) -> escaped \\r
+    Prevents JSON parsing errors by converting literal control characters to escaped sequences:
+    - Literal newlines (\n) → escaped \n
+    - Literal tabs (\t) → escaped \t
+    - Literal carriage returns (\r) → escaped \r
     - Preserves already-escaped sequences
+    
+    This fixes "Expecting ',' delimiter" errors caused by unescaped newlines in JSON string values.
     """
     # This regex-based approach finds quoted strings and escapes them properly
     import re
@@ -933,14 +942,14 @@ def _sanitize_json_string(text: str) -> str:
 def extract_json_payload(text: str) -> dict:
     """Extract and validate JSON payload from LLM response text.
     
-    REQUIRED BY SOUSCHEF_OUTPUT_SPEC.md:
-    - Extracts JSON from LLM response (may contain markdown code blocks)
-    - Sanitizes JSON to escape unescaped newlines
-    - Validates that required fields are present
+    Processing steps:
+    - Extracts JSON from LLM response (handles markdown code blocks)
+    - Sanitizes JSON to escape unescaped newlines (_sanitize_json_string)
+    - Validates that required top-level fields are present
     - Handles common JSON parsing errors (trailing commas, etc.)
     
     Returns:
-        dict: Parsed and validated JSON payload matching SousChef specification
+        dict: Parsed and validated JSON payload
         
     Raises:
         ValueError: If JSON is invalid, malformed, or missing required fields
