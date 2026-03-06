@@ -30,6 +30,10 @@ Structure:
 - Each step must have duration > 0
 """
 
+# ==============================================================================
+# IMPORTS AND DEPENDENCIES
+# ==============================================================================
+
 import json
 import os
 import time
@@ -43,12 +47,18 @@ from langchain_groq import ChatGroq
 from pydantic import BaseModel, Field
 
 
-BASE_DIR = os.path.dirname(__file__)
-DEFAULT_PROMPT_CHAR_LIMIT = int(os.getenv("GROQ_MAX_PROMPT_CHARS", "6000"))
-DEFAULT_RECIPE_CHAR_LIMIT = int(os.getenv("GROQ_MAX_RECIPE_CHARS", "3000"))
-MIN_REQUEST_INTERVAL = float(os.getenv("GROQ_MIN_REQUEST_INTERVAL", "1.0"))
-_LAST_REQUEST_AT = 0.0
+# ==============================================================================
+# CONFIGURATION AND CONSTANTS
+# ==============================================================================
+# Configuration for rate limiting and content size constraints
 
+BASE_DIR = os.path.dirname(__file__)
+DEFAULT_PROMPT_CHAR_LIMIT = int(os.getenv("GROQ_MAX_PROMPT_CHARS", "6000"))  # Max chars in prompt sent to LLM
+DEFAULT_RECIPE_CHAR_LIMIT = int(os.getenv("GROQ_MAX_RECIPE_CHARS", "3000"))  # Max chars in recipe text
+MIN_REQUEST_INTERVAL = float(os.getenv("GROQ_MIN_REQUEST_INTERVAL", "1.0"))  # Min seconds between LLM requests
+_LAST_REQUEST_AT = 0.0  # Timestamp of last LLM request (for rate limiting)
+
+# Allowed metric units for recipe ingredients (must use exact capitalization)
 ALLOWED_UNITS = {
     "Amount",
     "Can",
@@ -63,6 +73,7 @@ ALLOWED_UNITS = {
     "Teaspoon",
 }
 
+# Common unit aliases that get normalized to standard units
 UNIT_ALIASES = {
     "piece": "Amount",
     "pieces": "Amount",
@@ -75,7 +86,27 @@ UNIT_ALIASES = {
 }
 
 
+# ==============================================================================
+# URL SCRAPING AND RECIPE EXTRACTION
+# ==============================================================================
+# Functions to extract recipe information from web URLs
+
 def extract_text_from_json_ld(data: object) -> Optional[str]:
+    """
+    Extract recipe text from JSON-LD structured data (schema.org Recipe format).
+    
+    Searches for Recipe type in JSON-LD and extracts:
+    - Recipe name
+    - Description
+    - Ingredients list
+    - Cooking instructions
+    
+    Args:
+        data: JSON-LD data (can be dict or list of dicts)
+    
+    Returns:
+        Formatted recipe text string, or None if no recipe found
+    """
     items = data if isinstance(data, list) else [data]
     for item in items:
         if not isinstance(item, dict):
@@ -110,6 +141,23 @@ def extract_text_from_json_ld(data: object) -> Optional[str]:
 
 
 def extract_recipe_text_from_url(url: str) -> str:
+    """
+    Extract recipe text from a URL using multiple extraction methods.
+    
+    Extraction priority:
+    1. JSON-LD structured data (schema.org Recipe)
+    2. Main content from <article>, <main>, or <body> tags
+    
+    Args:
+        url: URL of the recipe webpage
+    
+    Returns:
+        Extracted recipe text (up to 6000 characters)
+    
+    Raises:
+        ValueError: If no recipe content could be extracted
+        requests.HTTPError: If URL request fails
+    """
     response = requests.get(url, timeout=15)
     response.raise_for_status()
     soup = BeautifulSoup(response.text, "html.parser")
@@ -131,6 +179,20 @@ def extract_recipe_text_from_url(url: str) -> str:
 
 
 def _clean_recipe_title(raw_title: str) -> str:
+    """
+    Clean up recipe title by removing site name and extra metadata.
+    
+    Handles common title patterns like:
+    - "Recipe Name | Site Name"
+    - "Recipe Name - Site Name"
+    - "Recipe Name — Site Name"
+    
+    Args:
+        raw_title: Raw title string from webpage
+    
+    Returns:
+        Cleaned recipe title (first part before common separators)
+    """
     title = " ".join(raw_title.replace("_", " ").split())
     for separator in (" | ", " - ", " — ", " – "):
         if separator in title:
@@ -142,6 +204,24 @@ def _clean_recipe_title(raw_title: str) -> str:
 
 
 def extract_recipe_title_from_url(url: str) -> str:
+    """
+    Extract recipe title from a webpage URL.
+    
+    Tries multiple sources in order of preference:
+    1. Open Graph meta tag (og:title)
+    2. Twitter Card meta tag (twitter:title)
+    3. Page <title> tag
+    4. First <h1> heading
+    
+    Args:
+        url: URL of the recipe webpage
+    
+    Returns:
+        Cleaned recipe title string (empty string if none found)
+    
+    Raises:
+        requests.HTTPError: If URL request fails
+    """
     response = requests.get(url, timeout=15)
     response.raise_for_status()
     soup = BeautifulSoup(response.text, "html.parser")
@@ -166,7 +246,18 @@ def extract_recipe_title_from_url(url: str) -> str:
     return ""
 
 
+# ==============================================================================
+# PYDANTIC DATA MODELS
+# ==============================================================================
+# Structured data models for recipe analysis and SousChef recipe format
+
 class RecipeAnalysis(BaseModel):
+    """
+    Model for initial recipe analysis results.
+    
+    Contains high-level information about the recipe used to guide
+    detailed step-by-step generation.
+    """
     ingredients: List[str]
     tools: List[str]
     cooking_time: str
@@ -174,11 +265,18 @@ class RecipeAnalysis(BaseModel):
 
 
 class LocalizedText(BaseModel):
-    en: str
-    nl_NL: str
+    """Bilingual text with English and Dutch translations."""
+    en: str  # English text
+    nl_NL: str  # Dutch text
 
 
 class NutritionalValues(BaseModel):
+    """
+    Nutritional information per serving.
+    
+    All values must be integers (no ranges or decimals).
+    Values are automatically normalized during processing.
+    """
     energie_kcal: int = Field(..., alias="Energie (kCal)")
     protein_grams: int = Field(..., alias="Protein (grams)")
     carbohydrates_grams: int = Field(..., alias="Carbohydrates (grams)")
@@ -193,6 +291,16 @@ class NutritionalValues(BaseModel):
 
 
 class RecipeVariantContent(BaseModel):
+    """
+    Content and metadata for a single recipe variant.
+    
+    Includes:
+    - Recipe names and descriptions (bilingual)
+    - Difficulty level
+    - Nutritional information
+    - Shopping list
+    - Tags and dietary/allergen information
+    """
     recipe_variant: str = Field(..., alias="Recipe Variant")
     recipe_image: Optional[str] = Field(None, alias="Recipe Image")
     recipe_name: LocalizedText = Field(..., alias="Recipe Name")
@@ -211,6 +319,12 @@ class RecipeVariantContent(BaseModel):
 
 
 class IngredientComponent(BaseModel):
+    """
+    Single ingredient with amount and unit.
+    
+    Metric units must use exact capitalization from ALLOWED_UNITS.
+    Common aliases are automatically normalized.
+    """
     ingredient: str = Field(..., alias="Ingredient")
     amount: float = Field(..., alias="Amount")
     metric_unit: Literal[
@@ -232,6 +346,15 @@ class IngredientComponent(BaseModel):
 
 
 class StepComponent(BaseModel):
+    """
+    Single cooking step with instructions, ingredients, and timing.
+    
+    Each step includes:
+    - Bilingual display names and instructions
+    - Ingredients used in this step
+    - Duration and countdown timers
+    - Workplace and icon for UI display
+    """
     display_name: Optional[LocalizedText] = Field(None, alias="Display Name")
     action: Optional[LocalizedText] = Field(None, alias="Action")
     step_number: Optional[str] = Field(None, alias="Step Number")
@@ -254,6 +377,14 @@ class StepComponent(BaseModel):
 
 
 class SousChefRecipe(BaseModel):
+    """
+    Complete SousChef recipe in the required output format.
+    
+    Top-level structure containing:
+    - Generic recipe name (bilingual)
+    - Recipe variants with full metadata
+    - All cooking steps
+    """
     order: int = Field(..., alias="Order")
     generic_name: LocalizedText = Field(..., alias="Generic Name")
     highlighted: Optional[bool] = Field(False, alias="Highlighted?")
@@ -266,7 +397,23 @@ class SousChefRecipe(BaseModel):
         populate_by_name = True
 
 
+# ==============================================================================
+# LLM INITIALIZATION AND UTILITY FUNCTIONS
+# ==============================================================================
+# Functions for building LLM instances and managing API constraints
+
 def build_llm(model_name: str, temperature: float, max_tokens: int | None) -> ChatGroq:
+    """
+    Create a ChatGroq LLM instance with specified configuration.
+    
+    Args:
+        model_name: Name of the Groq model to use
+        temperature: Sampling temperature (0.0 = deterministic, higher = more creative)
+        max_tokens: Maximum tokens in response (None = no limit)
+    
+    Returns:
+        Configured ChatGroq instance
+    """
     return ChatGroq(
         model=model_name,
         temperature=temperature,
@@ -275,6 +422,16 @@ def build_llm(model_name: str, temperature: float, max_tokens: int | None) -> Ch
 
 
 def _ensure_prompt_within_limit(prompt: str, limit: int) -> None:
+    """
+    Validate that prompt size doesn't exceed configured limit.
+    
+    Args:
+        prompt: Full prompt string to be sent to LLM
+        limit: Maximum allowed characters
+    
+    Raises:
+        ValueError: If prompt exceeds limit
+    """
     if len(prompt) > limit:
         raise ValueError(
             "Prompt size exceeds configured limit. "
@@ -284,6 +441,16 @@ def _ensure_prompt_within_limit(prompt: str, limit: int) -> None:
 
 
 def _ensure_recipe_within_limit(recipe_text: str, limit: int) -> None:
+    """
+    Validate that recipe text doesn't exceed configured limit.
+    
+    Args:
+        recipe_text: Raw recipe text from user input or URL
+        limit: Maximum allowed characters
+    
+    Raises:
+        ValueError: If recipe text exceeds limit
+    """
     if len(recipe_text) > limit:
         raise ValueError(
             "Recipe text exceeds configured limit. "
@@ -293,6 +460,12 @@ def _ensure_recipe_within_limit(recipe_text: str, limit: int) -> None:
 
 
 def _respect_rate_limit() -> None:
+    """
+    Enforce minimum time interval between LLM API requests.
+    
+    Blocks execution if not enough time has passed since the last request.
+    Uses global _LAST_REQUEST_AT to track timing across all LLM calls.
+    """
     global _LAST_REQUEST_AT
     now = time.monotonic()
     elapsed = now - _LAST_REQUEST_AT
@@ -302,6 +475,21 @@ def _respect_rate_limit() -> None:
 
 
 def _is_throttle_error(exc: Exception) -> bool:
+    """
+    Check if an exception indicates rate limiting or throttling.
+    
+    Looks for common rate limit indicators in error messages:
+    - "rate limit" or "rate_limit"
+    - "too many requests"
+    - "throttle"
+    - HTTP 429 status code
+    
+    Args:
+        exc: Exception to check
+    
+    Returns:
+        True if this is a rate limit error, False otherwise
+    """
     message = str(exc).lower()
     return any(
         token in message
@@ -316,6 +504,25 @@ def _is_throttle_error(exc: Exception) -> bool:
 
 
 def _run_with_retry(operation, max_retries: int = 3) -> str:
+    """
+    Execute an LLM operation with automatic retry on rate limit errors.
+    
+    Implements exponential backoff for rate limit errors:
+    - First retry: 1.5s delay
+    - Second retry: 3s delay
+    - Third retry: 6s delay (capped at 8s)
+    
+    Args:
+        operation: Callable that performs the LLM operation
+        max_retries: Maximum number of retry attempts
+    
+    Returns:
+        Result from successful operation
+    
+    Raises:
+        Exception: Re-raises non-throttle errors immediately
+        ValueError: If max retries exceeded on rate limit
+    """
     for attempt in range(max_retries + 1):
         try:
             _respect_rate_limit()
@@ -331,6 +538,20 @@ def _run_with_retry(operation, max_retries: int = 3) -> str:
 
 
 def _is_truncated_json(text: str) -> bool:
+    """
+    Check if JSON text appears to be truncated or malformed.
+    
+    Validates:
+    - Ends with closing brace
+    - Balanced braces {} and brackets []
+    - No unclosed strings
+    
+    Args:
+        text: JSON text to validate
+    
+    Returns:
+        True if JSON appears truncated, False if complete
+    """
     stripped = text.strip()
     if not stripped:
         return False
@@ -364,6 +585,23 @@ def _is_truncated_json(text: str) -> bool:
 
 
 def _stream_llm_content(llm: ChatGroq, prompt: str, max_chars: int) -> str:
+    """
+    Stream LLM response and enforce size limits.
+    
+    Monitors response size during streaming to fail fast if output
+    exceeds limits (prevents wasting tokens on oversized responses).
+    
+    Args:
+        llm: ChatGroq instance
+        prompt: Prompt to send to LLM
+        max_chars: Maximum allowed characters in response
+    
+    Returns:
+        Complete response string
+    
+    Raises:
+        ValueError: If response exceeds max_chars during streaming
+    """
     def _invoke_stream() -> str:
         if hasattr(llm, "stream"):
             chunks = []
@@ -386,6 +624,11 @@ def _stream_llm_content(llm: ChatGroq, prompt: str, max_chars: int) -> str:
 
     return _run_with_retry(_invoke_stream)
 
+
+# ==============================================================================
+# RECIPE CONDENSATION
+# ==============================================================================
+# Functions to condense oversized recipe text while preserving key information
 
 def condense_recipe_text(llm: ChatGroq, recipe_text: str, char_limit: int = DEFAULT_RECIPE_CHAR_LIMIT) -> str:
     """
@@ -441,7 +684,28 @@ OUTPUT ONLY THE CONDENSED RECIPE, NO EXPLANATIONS."""
     return condensed
 
 
+# ==============================================================================
+# RECIPE ANALYSIS
+# ==============================================================================
+# Functions to analyze recipe and extract high-level information
+
 def analyze_recipe(llm: ChatGroq, recipe_text: str) -> RecipeAnalysis:
+    """
+    Analyze recipe to extract ingredients, tools, timing, and complexity.
+    
+    This is the first step in recipe transformation, creating a structured
+    analysis that guides the subsequent detailed step-by-step generation.
+    
+    Args:
+        llm: ChatGroq instance for analysis
+        recipe_text: Raw recipe text to analyze
+    
+    Returns:
+        RecipeAnalysis with ingredients, tools, cooking time, and complexity
+    
+    Raises:
+        ValueError: If recipe text exceeds size limits
+    """
     prompt = """
 ### Role
 You are an experienced recipe guide with deep knowledge of recipes worldwide.
@@ -482,6 +746,11 @@ Analyze this recipe to prepare for building a SousChef-style step-by-step instru
     return _run_with_retry(_invoke_structured)
 
 
+# ==============================================================================
+# RECIPE GENERATION - MAIN ORCHESTRATION
+# ==============================================================================
+# Top-level functions that orchestrate the recipe generation process
+
 def generate_souschef_recipe(
     llm: ChatGroq,
     recipe_text: str,
@@ -511,6 +780,11 @@ def generate_souschef_recipe(
     # Step 3: Assemble into final SousChefRecipe
     return _assemble_souschef_recipe(metadata, steps)
 
+
+# ==============================================================================
+# METADATA NORMALIZATION
+# ==============================================================================
+# Functions to normalize and fix common metadata issues
 
 def _normalize_metadata(metadata: dict) -> dict:
     """Normalize metadata JSON, handling ranges and type conversions."""
@@ -544,12 +818,34 @@ def _normalize_metadata(metadata: dict) -> dict:
     return metadata
 
 
+# ==============================================================================
+# RECIPE METADATA GENERATION
+# ==============================================================================
+# Functions to generate top-level recipe metadata (names, descriptions, etc.)
+
 def _generate_recipe_metadata(
     llm: ChatGroq,
     recipe_text: str,
     analysis: RecipeAnalysis,
 ) -> dict:
-    """Generate top-level recipe metadata: names, descriptions, difficulty, nutritional values, shopping list."""
+    """
+    Generate top-level recipe metadata: names, descriptions, difficulty, nutritional values, shopping list.
+    
+    Creates bilingual content (English and Dutch) for:
+    - Generic name and full recipe name
+    - Two-sentence description
+    - Difficulty level
+    - Estimated nutritional values per serving
+    - Shopping list of main ingredients
+    
+    Args:
+        llm: ChatGroq instance
+        recipe_text: Original recipe text
+        analysis: Recipe analysis results
+    
+    Returns:
+        Dictionary with normalized metadata
+    """
     
     metadata_prompt = """You are a recipe metadata expert. Extract and generate key information about this recipe.
 
@@ -618,13 +914,33 @@ Rules:
     return _run_with_retry(_invoke_metadata)
 
 
+# ==============================================================================
+# RECIPE STEPS GENERATION
+# ==============================================================================
+# Functions to generate cooking steps with instructions and ingredients
+
 def _generate_recipe_steps(
     llm: ChatGroq,
     recipe_text: str,
     analysis: RecipeAnalysis,
     metadata: dict,
 ) -> List[dict]:
-    """Generate recipe steps one at a time."""
+    """
+    Generate detailed recipe steps one at a time.
+    
+    Two-phase process:
+    1. Generate step outline (titles/actions for each step)
+    2. Generate detailed content for each step individually
+    
+    Args:
+        llm: ChatGroq instance
+        recipe_text: Original recipe text
+        analysis: Recipe analysis results
+        metadata: Recipe metadata from _generate_recipe_metadata()
+    
+    Returns:
+        List of step dictionaries with instructions, ingredients, and timing
+    """
     
     # First, get the step outline (how many steps, what are they about)
     step_outline = _generate_step_outline(llm, recipe_text, analysis)
@@ -650,7 +966,20 @@ def _generate_step_outline(
     recipe_text: str,
     analysis: RecipeAnalysis,
 ) -> List[str]:
-    """Generate a simple outline of cooking steps."""
+    """
+    Generate a simple outline of cooking steps (titles only).
+    
+    Creates 3-15 high-level step titles that will be expanded
+    into detailed instructions in _generate_single_step().
+    
+    Args:
+        llm: ChatGroq instance
+        recipe_text: Original recipe text
+        analysis: Recipe analysis results
+    
+    Returns:
+        List of step titles (e.g., ["Chop vegetables", "Cook sauce", "Plate dish"])
+    """
     
     outline_prompt = """You are a recipe instructor. Break this recipe into clear cooking steps.
 
@@ -695,7 +1024,27 @@ def _generate_single_step(
     step_title: str,
     variant: str,
 ) -> dict:
-    """Generate a single step with detailed instructions."""
+    """
+    Generate detailed content for a single cooking step.
+    
+    Creates:
+    - Bilingual display names and instructions
+    - Action verb and icon
+    - List of ingredients used in this step
+    - Duration estimate
+    - Countdown timers (if applicable)
+    
+    Args:
+        llm: ChatGroq instance
+        recipe_text: Original recipe text
+        analysis: Recipe analysis results
+        step_number: Step number in sequence (1, 2, 3, ...)
+        step_title: Title from step outline
+        variant: Recipe variant type
+    
+    Returns:
+        Dictionary with complete step data
+    """
     
     step_prompt = """You are a SousChef recipe instructor. Generate ONE detailed cooking step.
 
@@ -766,8 +1115,25 @@ Rules:
     return _run_with_retry(_invoke_step)
 
 
+# ==============================================================================
+# METRIC UNIT NORMALIZATION
+# ==============================================================================
+# Functions to normalize ingredient units and ensure proper formatting
+
 def _normalize_step_units(step_data: dict) -> dict:
-    """Normalize metric units in a single step before validation."""
+    """Normalize metric units in a single step before validation.
+    
+    Handles:
+    - Unit aliases (e.g., "piece" → "Amount")
+    - Case-insensitive matching
+    - Defaulting to "Amount" for unknown units
+    
+    Args:
+        step_data: Dictionary with step data including ingredients
+    
+    Returns:
+        Step data with normalized metric units
+    """
     ingredients = step_data.get("ingredients", [])
     if not ingredients:
         return step_data
@@ -798,8 +1164,31 @@ def _normalize_step_units(step_data: dict) -> dict:
     return step_data
 
 
+# ==============================================================================
+# RECIPE ASSEMBLY
+# ==============================================================================
+# Functions to assemble metadata and steps into final SousChefRecipe structure
+
 def _assemble_souschef_recipe(metadata: dict, steps: List[dict]) -> SousChefRecipe:
-    """Assemble metadata and steps into final SousChefRecipe structure."""
+    """Assemble metadata and steps into final SousChefRecipe structure.
+    
+    Combines:
+    - Normalized metadata (names, descriptions, nutritional values)
+    - Generated steps (with normalized units and validated ingredients)
+    
+    Creates complete Pydantic models:
+    - SousChefRecipe (top level)
+    - RecipeVariantContent (metadata and shopping list)
+    - StepComponent (each cooking step)
+    - IngredientComponent (each ingredient)
+    
+    Args:
+        metadata: Normalized metadata dictionary
+        steps: List of generated step dictionaries
+    
+    Returns:
+        Validated SousChefRecipe instance
+    """
     
     # Ensure nutritional values are properly structured
     nutritional_data = metadata.get("nutritional_values", {})
@@ -893,6 +1282,11 @@ def _assemble_souschef_recipe(metadata: dict, steps: List[dict]) -> SousChefReci
     )
 
 
+# ==============================================================================
+# JSON SANITIZATION AND EXTRACTION
+# ==============================================================================
+# Functions to clean and parse JSON from LLM responses
+
 def _sanitize_json_string(text: str) -> str:
     """Sanitize JSON string by escaping unescaped newlines and special characters.
     
@@ -915,16 +1309,14 @@ def _sanitize_json_string(text: str) -> str:
     
     # Find all quoted strings and fix unescaped newlines/tabs/returns in them
     def fix_string_content(match):
-        quote_char = match.group(1)  # The quote character (" or ')
-        content = match.group(2)
-        
+        content = match.group(1)
+
         # Escape control characters
         content = content.replace("\n", "\\n")
         content = content.replace("\r", "\\r")
         content = content.replace("\t", "\\t")
-        content = content.replace('"', '\\"') if quote_char == '"' else content
-        
-        return f'{quote_char}{content}{quote_char}'
+
+        return f'"{content}"'
     
     # Match strings enclosed in double quotes (but not already escaped)
     # This is a simplified approach - match quote, then non-quote chars, then quote
@@ -1027,8 +1419,25 @@ def extract_json_payload(text: str) -> dict:
             raise ValueError(error_msg)
 
 
+# ==============================================================================
+# FINAL NORMALIZATION AND VALIDATION
+# ==============================================================================
+# Functions to normalize and validate the complete recipe structure
+
 def normalize_metric_units(payload: dict) -> dict:
-    # Normalize Shopping List from complex objects to simple strings
+    """Normalize metric units and simplify complex structures in final recipe payload.
+    
+    Performs final cleanup:
+    - Shopping list: converts complex objects to simple strings
+    - Metric units: normalizes using aliases and allowed units
+    - Countdown timers: converts objects to formatted strings
+    
+    Args:
+        payload: Complete recipe dictionary (pre-validation)
+    
+    Returns:
+        Normalized payload ready for SousChefRecipe validation
+    """
     recipe_variants = payload.get("Recipe Variant Content", [])
     for variant in recipe_variants:
         shopping_list = variant.get("Shopping List", [])
@@ -1083,6 +1492,22 @@ def normalize_metric_units(payload: dict) -> dict:
 
 
 def validate_recipe(recipe: SousChefRecipe) -> List[str]:
+    """
+    Validate recipe structure and content requirements.
+    
+    Checks:
+    - Maximum 50 steps
+    - At least one recipe variant
+    - Descriptions have exactly 2 paragraphs
+    - All steps have non-empty bilingual instructions
+    - All steps have duration > 0
+    
+    Args:
+        recipe: SousChefRecipe instance to validate
+    
+    Returns:
+        List of validation issue strings (empty if valid)
+    """
     issues = []
     if len(recipe.steps_part_1) > 50:
         issues.append("Steps Part 1 exceeds 50 steps.")
@@ -1107,7 +1532,16 @@ def validate_recipe(recipe: SousChefRecipe) -> List[str]:
     return issues
 
 
+# ==============================================================================
+# MAIN ENTRY POINT
+# ==============================================================================
+
 def main() -> None:
+    """
+    Main entry point for the SousChef recipe transformer application.
+    
+    Loads environment variables and launches the Streamlit UI.
+    """
     load_dotenv(".env", override=True)
     from src.main import main as streamlit_main
 
